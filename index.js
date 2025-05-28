@@ -67,27 +67,65 @@ bot.on('message', async (msg) => {
         }
     }
 
-    // Handle private messages
+    // Handle private messages (text, photo, video)
     if (msg.chat.type === 'private' && msg.text !== '/start') {
-        const text = msg.text;
-        const sender = msg.from.username
-            ? `@${msg.from.username}`
-            : `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim();
-
         if (groupIds.length === 0) {
             await bot.sendMessage(chatId, "Bot hech qanday guruhga qo'shilmagan.");
             return;
         }
-        for (const group of groupIds) {
-            try {
-                const sentMsg = await bot.sendMessage(group.id, text);
-                lastMessages[group.id] = sentMsg.message_id;
-                fs.writeFileSync(LAST_MESSAGES_FILE, JSON.stringify(lastMessages, null, 2));
-            } catch (err) {
-                console.error(`Failed to send to group ${group.id}:`, err.message);
+
+        let sentToGroups = 0;
+        let lastSentMsg = null;
+        // Handle photo
+        if (msg.photo) {
+            const photo = msg.photo[msg.photo.length - 1].file_id; // largest size
+            const caption = msg.caption || '';
+            for (const group of groupIds) {
+                try {
+                    const sentMsg = await bot.sendPhoto(group.id, photo, { caption });
+                    lastMessages[group.id] = sentMsg.message_id;
+                    fs.writeFileSync(LAST_MESSAGES_FILE, JSON.stringify(lastMessages, null, 2));
+                    sentToGroups++;
+                } catch (err) {
+                    console.error(`Failed to send photo to group ${group.id}:`, err.message);
+                }
             }
+            await bot.sendMessage(chatId, `Sizning fotosuratingiz ${sentToGroups} ta guruhga yuborildi.`);
+            return;
         }
-        await bot.sendMessage(chatId, 'Sizning xabaringiz guruhlarga yuborildi.');
+        // Handle video
+        if (msg.video) {
+            const video = msg.video.file_id;
+            const caption = msg.caption || '';
+            for (const group of groupIds) {
+                try {
+                    const sentMsg = await bot.sendVideo(group.id, video, { caption });
+                    lastMessages[group.id] = sentMsg.message_id;
+                    fs.writeFileSync(LAST_MESSAGES_FILE, JSON.stringify(lastMessages, null, 2));
+                    sentToGroups++;
+                } catch (err) {
+                    console.error(`Failed to send video to group ${group.id}:`, err.message);
+                }
+            }
+            await bot.sendMessage(chatId, `Sizning videongiz ${sentToGroups} ta guruhga yuborildi.`);
+            return;
+        }
+        // Handle text (default)
+        if (msg.text) {
+            const text = msg.text;
+            for (const group of groupIds) {
+                try {
+                    const sentMsg = await bot.sendMessage(group.id, text);
+                    lastMessages[group.id] = sentMsg.message_id;
+                    fs.writeFileSync(LAST_MESSAGES_FILE, JSON.stringify(lastMessages, null, 2));
+                    sentToGroups++;
+                } catch (err) {
+                    console.error(`Failed to send to group ${group.id}:`, err.message);
+                }
+            }
+            await bot.sendMessage(chatId, 'Sizning xabaringiz guruhlarga yuborildi.');
+            return;
+        }
     }
 
     // Handle /delete_last command in private chat
