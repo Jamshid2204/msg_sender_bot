@@ -33,9 +33,17 @@ if (fs.existsSync(LAST_MESSAGES_FILE)) {
     }
 }
 
+const ownerId = process.env.OWNER_ID;
+
 // Слушаем события, когда бот добавляется в группу
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
+
+    // Restrict private control to owner only
+    if (msg.chat.type === 'private' && String(msg.from.id) !== String(ownerId)) {
+        await bot.sendMessage(chatId, 'Sizda botni boshqarish huquqi yo\'q.');
+        return;
+    }
 
     // Handle /start command only in private chat
     if (msg.text === '/start' && msg.chat.type === 'private') {
