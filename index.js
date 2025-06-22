@@ -66,6 +66,19 @@ bot.on('message', async (msg) => {
         return;
     }
 
+    // Handle /groups command in private chat
+    if (msg.chat.type === 'private' && msg.text === '/groups') {
+        if (fs.existsSync(GROUPS_FILE)) {
+            await bot.sendDocument(chatId, GROUPS_FILE, {}, {
+                filename: 'groups.json',
+                contentType: 'application/json'
+            });
+        } else {
+            await bot.sendMessage(chatId, "groups.json fayli topilmadi.");
+        }
+        return;
+    }
+
     // Track group IDs and names
     if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
         if (!groupIds.some(g => g.id === chatId)) {
