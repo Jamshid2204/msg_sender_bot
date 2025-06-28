@@ -73,25 +73,57 @@ bot.on('message', async (msg) => {
     return bot.sendMessage(chatId, 'Botga xush kelibsiz!', { reply_markup: keyboard });
   }
 
-    // Handle group list button in private chat
-    if (msg.chat.type === 'private' && msg.text === "Guruhlar ro'yxati") {
-        if (groupIds.length === 0) {
-            await bot.sendMessage(chatId, "Bot hech qanday guruhga qo'shilmagan.");
-        } else {
-            const groupList = groupIds.map((g, i) => `${i + 1}. ${g.name}`).join('\n');
-            await bot.sendMessage(chatId, `Bot quyidagi guruhlarga qo'shilgan:\n${groupList}`);
-        }
-        return;
+  // "Guruhlar ro'yxati" tugmasi
+  if (msg.chat.type === 'private' && msg.text === "Guruhlar ro'yxati") {
+    if (!groupIds.length) {
+      return bot.sendMessage(chatId, "Bot hech qanday guruhga qo'shilmagan.");
     }
 
-    // Track group IDs and names
-    if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
-        if (!groupIds.some(g => g.id === chatId)) {
-            groupIds.push({ id: chatId, name: msg.chat.title || 'No name' });
-            // Save groupIds to file here
-            fs.writeFileSync(GROUPS_FILE, JSON.stringify(groupIds, null, 2));
-        }
+    let updatedGroupIds = [];
+    let availableGroups = [];
+
+    for (const group of groupIds) {
+      try {
+        await bot.getChat(group.id);
+        updatedGroupIds.push(group);
+        availableGroups.push(group);
+      } catch (err) {
+        console.warn(`❌ Guruhdan chiqarilgan: ${group.name} (${group.id})`);
+      }
     }
+
+    if (updatedGroupIds.length !== groupIds.length) {
+      groupIds = updatedGroupIds;
+      fs.writeFileSync(GROUPS_FILE, JSON.stringify(groupIds, null, 2));
+    }
+
+    if (!availableGroups.length) {
+      return bot.sendMessage(chatId, "Bot hech qanday guruhda qolmagan.");
+    }
+
+    const groupList = availableGroups.map((g, i) => `${i + 1}. ${g.name}`).join('\n');
+    return bot.sendMessage(chatId, `📋 Bot quyidagi guruhlarda mavjud:\n${groupList}`);
+  }
+
+  // /groups - file yuborish
+  if (msg.chat.type === 'private' && msg.text === '/groups') {
+    if (fs.existsSync(GROUPS_FILE)) {
+      return bot.sendDocument(chatId, GROUPS_FILE, {}, {
+        filename: 'groups.json',
+        contentType: 'application/json'
+      });
+    } else {
+      return bot.sendMessage(chatId, "groups.json fayli topilmadi.");
+    }
+  }
+
+  // Guruhga qo‘shilganda
+  if (['group', 'supergroup'].includes(msg.chat.type)) {
+    if (!groupIds.find(g => g.id === chatId)) {
+      groupIds.push({ id: chatId, name: msg.chat.title || 'No name' });
+      fs.writeFileSync(GROUPS_FILE, JSON.stringify(groupIds, null, 2));
+    }
+  }
 
   // "Oxirgi xabarni o'chirish" tugmasi
   if (msg.chat.type === 'private' && msg.text === "Oxirgi xabarni o'chirish") {
