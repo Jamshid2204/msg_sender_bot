@@ -117,6 +117,17 @@ bot.on('message', async (msg) => {
     }
   }
 
+    // 🆕 /ping qo‘shish — guruhdan kelgan bo‘lsa
+  if ((msg.chat.type === 'group' || msg.chat.type === 'supergroup') && msg.text === '/ping') {
+    if (!groupIds.find(g => g.id === msg.chat.id)) {
+      groupIds.push({ id: msg.chat.id, name: msg.chat.title || 'No name' });
+      fs.writeFileSync(GROUPS_FILE, JSON.stringify(groupIds, null, 2));
+      return bot.sendMessage(msg.chat.id, "✅ Bu guruh ro'yxatga qo‘shildi.");
+    } else {
+      return bot.sendMessage(msg.chat.id, "✅ Bu guruh allaqachon ro'yxatda mavjud.");
+    }
+  }
+
   // Guruhga qo‘shilganda
   if (['group', 'supergroup'].includes(msg.chat.type)) {
     if (!groupIds.find(g => g.id === chatId)) {
