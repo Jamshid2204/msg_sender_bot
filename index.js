@@ -1,157 +1,229 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
+
 const GROUPS_FILE = 'groups.json';
 const LAST_MESSAGES_FILE = 'last_messages.json';
 
-// Укажите токен вашего бота
 const token = process.env.BOT_TOKEN;
-// const token = '5911571118:AAGfHbn-mySxkNrb0G7jc7fvJr60w-LN9mk';
+const ownerIds = process.env.OWNER_IDS
+  ? process.env.OWNER_IDS.split(',').map(id => id.trim())
+  : [];
 
-// Создайте экземпляр бота
 const bot = new TelegramBot(token, { polling: true });
 
-// Load group info from file if it exists
-let groupIds = [];
-if (fs.existsSync(GROUPS_FILE)) {
+let groupIds = fs.existsSync(GROUPS_FILE)
+  ? JSON.parse(fs.readFileSync(GROUPS_FILE, 'utf8'))
+  : [];
+
+let lastMessages = fs.existsSync(LAST_MESSAGES_FILE)
+  ? JSON.parse(fs.readFileSync(LAST_MESSAGES_FILE, 'utf8'))
+  : {};
+
+const processedMessages = new Set();
+const mediaGroups = {};
+
+const debounce = (func, delay) => {
+  const timers = {};
+  return (key, ...args) => {
+    clearTimeout(timers[key]);
+    timers[key] = setTimeout(() => func(...args), delay);
+  };
+};
+
+const sendMediaGroupDebounced = debounce(async (id) => {
+  const groupMedia = mediaGroups[id];
+  if (!groupMedia || groupMedia.length === 0) return;
+
+  for (const group of groupIds) {
     try {
-        groupIds = JSON.parse(fs.readFileSync(GROUPS_FILE, 'utf8'));
-    } catch (e) {
-        console.error('Failed to load group IDs:', e);
-        groupIds = [];
+      const sent = await bot.sendMediaGroup(group.id, groupMedia);
+      lastMessages[group.id] = sent[0].message_id;
+    } catch (err) {
+      console.error(`❌ Media group xatolik (${group.id}):`, err.message);
     }
-}
+  }
 
-// Load last messages from file if it exists
-let lastMessages = {};
-if (fs.existsSync(LAST_MESSAGES_FILE)) {
-    try {
-        lastMessages = JSON.parse(fs.readFileSync(LAST_MESSAGES_FILE, 'utf8'));
-    } catch (e) {
-        console.error('Failed to load last messages:', e);
-        lastMessages = {};
-    }
-}
+  fs.writeFileSync(LAST_MESSAGES_FILE, JSON.stringify(lastMessages, null, 2));
+  for (const adminId of ownerIds) {
+    await bot.sendMessage(adminId, `📷 ${groupMedia.length} ta albom ${groupIds.length} ta guruhga yuborildi.`);
+  }
+  delete mediaGroups[id];
+}, 2000);
 
-const ownerId = process.env.OWNER_ID;
-
-// Слушаем события, когда бот добавляется в группу
 bot.on('message', async (msg) => {
-    const chatId = msg.chat.id;
+  const chatId = msg.chat.id;
 
-    // Restrict private control to owner only
-    if (msg.chat.type === 'private' && String(msg.from.id) !== String(ownerId)) {
-        await bot.sendMessage(chatId, 'Sizda botni boshqarish huquqi yo\'q.');
-        return;
+  if (msg.chat.type === 'private' && !ownerIds.includes(String(msg.from.id))) {
+  return bot.sendMessage(chatId, "Sizda botni boshqarish huquqi yo'q.");
+  }
+
+  if (processedMessages.has(msg.message_id)) return;
+  processedMessages.add(msg.message_id);
+
+  // /start
+  if (msg.text === '/start' && msg.chat.type === 'private') {
+    const keyboard = {
+      keyboard: [
+        [{ text: "Guruhlar ro'yxati" }],
+        [{ text: "Oxirgi xabarni o'chirish" }]
+      ],
+      resize_keyboard: true
+    };
+    return bot.sendMessage(chatId, 'Botga xush kelibsiz!', { reply_markup: keyboard });
+  }
+
+  // "Guruhlar ro'yxati" tugmasi
+  if (msg.chat.type === 'private' && msg.text === "Guruhlar ro'yxati") {
+    if (!groupIds.length) {
+      return bot.sendMessage(chatId, "Bot hech qanday guruhga qo'shilmagan.");
     }
 
-    // Handle /start command only in private chat
-    if (msg.text === '/start' && msg.chat.type === 'private') {
-        const keyboard = {
-            keyboard: [[{ text: "Guruhlar ro'yxati" }]],
-            resize_keyboard: true,
-            one_time_keyboard: false
-        };
-        await bot.sendMessage(chatId, 'botga xush kelibsiz', { reply_markup: keyboard });
+    let updatedGroupIds = [];
+    let availableGroups = [];
+
+    for (const group of groupIds) {
+      try {
+        await bot.getChat(group.id);
+        updatedGroupIds.push(group);
+        availableGroups.push(group);
+      } catch (err) {
+        console.warn(`❌ Guruhdan chiqarilgan: ${group.name} (${group.id})`);
+      }
     }
 
-    // Handle group list button in private chat
-    if (msg.chat.type === 'private' && msg.text === "Guruhlar ro'yxati") {
-        if (groupIds.length === 0) {
-            await bot.sendMessage(chatId, "Bot hech qanday guruhga qo'shilmagan.");
-        } else {
-            const groupList = groupIds.map((g, i) => `${i + 1}. ${g.name}`).join('\n');
-            await bot.sendMessage(chatId, `Bot quyidagi guruhlarga qo'shilgan:\n${groupList}`);
-        }
-        return;
+    if (updatedGroupIds.length !== groupIds.length) {
+      groupIds = updatedGroupIds;
+      fs.writeFileSync(GROUPS_FILE, JSON.stringify(groupIds, null, 2));
     }
 
-    // Track group IDs and names
-    if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
-        if (!groupIds.some(g => g.id === chatId)) {
-            groupIds.push({ id: chatId, name: msg.chat.title || 'No name' });
-            // Save groupIds to file here
-            fs.writeFileSync(GROUPS_FILE, JSON.stringify(groupIds, null, 2));
-        }
+    if (!availableGroups.length) {
+      return bot.sendMessage(chatId, "Bot hech qanday guruhda qolmagan.");
     }
 
-    // Handle private messages (text, photo, video)
-    if (msg.chat.type === 'private' && msg.text !== '/start') {
-        if (groupIds.length === 0) {
-            await bot.sendMessage(chatId, "Bot hech qanday guruhga qo'shilmagan.");
-            return;
-        }
+    const groupList = availableGroups.map((g, i) => `${i + 1}. ${g.name}`).join('\n');
+    return bot.sendMessage(chatId, `📋 Bot quyidagi guruhlarda mavjud:\n${groupList}`);
+  }
 
-        let sentToGroups = 0;
-        let lastSentMsg = null;
-        // Handle photo
-        if (msg.photo) {
-            const photo = msg.photo[msg.photo.length - 1].file_id; // largest size
-            const caption = msg.caption || '';
-            for (const group of groupIds) {
-                try {
-                    const sentMsg = await bot.sendPhoto(group.id, photo, { caption });
-                    lastMessages[group.id] = sentMsg.message_id;
-                    fs.writeFileSync(LAST_MESSAGES_FILE, JSON.stringify(lastMessages, null, 2));
-                    sentToGroups++;
-                } catch (err) {
-                    console.error(`Failed to send photo to group ${group.id}:`, err.message);
-                }
-            }
-            await bot.sendMessage(chatId, `Sizning fotosuratingiz ${sentToGroups} ta guruhga yuborildi.`);
-            return;
-        }
-        // Handle video
-        if (msg.video) {
-            const video = msg.video.file_id;
-            const caption = msg.caption || '';
-            for (const group of groupIds) {
-                try {
-                    const sentMsg = await bot.sendVideo(group.id, video, { caption });
-                    lastMessages[group.id] = sentMsg.message_id;
-                    fs.writeFileSync(LAST_MESSAGES_FILE, JSON.stringify(lastMessages, null, 2));
-                    sentToGroups++;
-                } catch (err) {
-                    console.error(`Failed to send video to group ${group.id}:`, err.message);
-                }
-            }
-            await bot.sendMessage(chatId, `Sizning videongiz ${sentToGroups} ta guruhga yuborildi.`);
-            return;
-        }
-        // Handle text (default)
-        if (msg.text) {
-            const text = msg.text;
-            for (const group of groupIds) {
-                try {
-                    const sentMsg = await bot.sendMessage(group.id, text);
-                    lastMessages[group.id] = sentMsg.message_id;
-                    fs.writeFileSync(LAST_MESSAGES_FILE, JSON.stringify(lastMessages, null, 2));
-                    sentToGroups++;
-                } catch (err) {
-                    console.error(`Failed to send to group ${group.id}:`, err.message);
-                }
-            }
-            await bot.sendMessage(chatId, 'Sizning xabaringiz guruhlarga yuborildi.');
-            return;
-        }
+  // /groups - file yuborish
+  if (msg.chat.type === 'private' && msg.text === '/groups') {
+    if (fs.existsSync(GROUPS_FILE)) {
+      return bot.sendDocument(chatId, GROUPS_FILE, {}, {
+        filename: 'groups.json',
+        contentType: 'application/json'
+      });
+    } else {
+      return bot.sendMessage(chatId, "groups.json fayli topilmadi.");
     }
+  }
 
-    // Handle /delete_last command in private chat
-    if (msg.chat.type === 'private' && msg.text === '/delete_last') {
-        let deletedCount = 0;
-        for (const group of groupIds) {
-            const groupId = group.id;
-            const messageId = lastMessages[groupId];
-            if (messageId) {
-                try {
-                    await bot.deleteMessage(groupId, messageId);
-                    deletedCount++;
-                } catch (err) {
-                    console.error(`Failed to delete message in group ${groupId}:`, err.message);
-                }
-            }
-        }
-        await bot.sendMessage(chatId, `${deletedCount} ta guruhda oxirgi xabar o'chirildi.`);
-        return;
+  // Guruhga qo‘shilganda
+  if (['group', 'supergroup'].includes(msg.chat.type)) {
+    if (!groupIds.find(g => g.id === chatId)) {
+      groupIds.push({ id: chatId, name: msg.chat.title || 'No name' });
+      fs.writeFileSync(GROUPS_FILE, JSON.stringify(groupIds, null, 2));
     }
+  }
+
+  // "Oxirgi xabarni o'chirish" tugmasi
+  if (msg.chat.type === 'private' && msg.text === "Oxirgi xabarni o'chirish") {
+    let deleted = 0;
+    for (const group of groupIds) {
+      const mid = lastMessages[group.id];
+      if (mid) {
+        try {
+          await bot.deleteMessage(group.id, mid);
+          deleted++;
+        } catch (e) {
+          console.error(`❌ Delete error (${group.id}):`, e.message);
+        }
+      }
+    }
+    return bot.sendMessage(chatId, `${deleted} ta guruhda oxirgi xabar o'chirildi.`);
+  }
+
+  // MediaGroup (album)
+  if (msg.media_group_id && msg.photo && msg.chat.type === 'private') {
+    const id = msg.media_group_id;
+    if (!mediaGroups[id]) mediaGroups[id] = [];
+
+    mediaGroups[id].push({
+      type: 'photo',
+      media: msg.photo[msg.photo.length - 1].file_id,
+      caption: msg.caption || '',
+      parse_mode: 'HTML'
+    });
+
+    sendMediaGroupDebounced(id, id);
+    return;
+  }
+
+  // Video
+  if (msg.video && msg.chat.type === 'private') {
+    let count = 0;
+    const video = msg.video.file_id;
+    const caption = msg.caption || '';
+    for (const group of groupIds) {
+      try {
+        const sent = await bot.sendVideo(group.id, video, { caption });
+        lastMessages[group.id] = sent.message_id;
+        count++;
+      } catch (e) {
+        console.error(`❌ Video xatolik (${group.id}):`, e.message);
+      }
+    }
+    fs.writeFileSync(LAST_MESSAGES_FILE, JSON.stringify(lastMessages, null, 2));
+    return bot.sendMessage(chatId, `📹 Videongiz ${count} ta guruhga yuborildi.`);
+  }
+
+  // Yakka rasm
+  if (msg.photo && !msg.media_group_id && msg.chat.type === 'private') {
+    let count = 0;
+    const photo = msg.photo[msg.photo.length - 1].file_id;
+    const caption = msg.caption || '';
+    for (const group of groupIds) {
+      try {
+        const sent = await bot.sendPhoto(group.id, photo, { caption });
+        lastMessages[group.id] = sent.message_id;
+        count++;
+      } catch (e) {
+        console.error(`❌ Rasm xatolik (${group.id}):`, e.message);
+      }
+    }
+    fs.writeFileSync(LAST_MESSAGES_FILE, JSON.stringify(lastMessages, null, 2));
+    return bot.sendMessage(chatId, `📸 Fotosuratingiz ${count} ta guruhga yuborildi.`);
+  }
+
+  // Matn
+  if (msg.text && msg.chat.type === 'private' && !msg.text.startsWith('/')) {
+    let count = 0;
+    for (const group of groupIds) {
+      try {
+        const sent = await bot.sendMessage(group.id, msg.text);
+        lastMessages[group.id] = sent.message_id;
+        count++;
+      } catch (e) {
+        console.error(`❌ Matn xatolik (${group.id}):`, e.message);
+      }
+    }
+    fs.writeFileSync(LAST_MESSAGES_FILE, JSON.stringify(lastMessages, null, 2));
+    return bot.sendMessage(chatId, `📨 Xabaringiz ${count} ta guruhga yuborildi.`);
+  }
+
+  // /delete_last buyrug‘i
+  if (msg.text === '/delete_last' && msg.chat.type === 'private') {
+    let deleted = 0;
+    for (const group of groupIds) {
+      const mid = lastMessages[group.id];
+      if (mid) {
+        try {
+          await bot.deleteMessage(group.id, mid);
+          deleted++;
+        } catch (e) {
+          console.error(`❌ Delete error (${group.id}):`, e.message);
+        }
+      }
+    }
+    return bot.sendMessage(chatId, `${deleted} ta guruhda oxirgi xabar o'chirildi.`);
+  }
 });
