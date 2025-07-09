@@ -1,5 +1,11 @@
 
 node_modules
-index_bot.js
+bot.js
+file.js
 group_messages.json
 groups.json
+groups1.json
+last_messages.json
+pending_messages.json
+import_groups.js
+index_bot.js
