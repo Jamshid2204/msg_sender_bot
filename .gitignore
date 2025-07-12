@@ -1,5 +1,6 @@
 
 node_modules
+.env
 bot.js
 file.js
 group_messages.json
